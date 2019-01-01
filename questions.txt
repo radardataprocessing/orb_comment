@@ -1,0 +1,5 @@
+（1）PnPsolver.cc中的mat_to_quat函数，为何tr>0时先求q0,tr>0是否代表q0是q0,qx,qy,qz中最大的那个？
+
+（2）ORBextractor.cc中 static int bit_pattern_31_[256*4] 里面标的均值方差什么意思？
+
+（3）PnPsolver.cc中find_betas_approx为何不求N=4的情况，N=1,2,3时又为何保留beta的那些项呢？
