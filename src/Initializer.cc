@@ -38,7 +38,7 @@ Qx = |   c  -s|    Qy = |    1   |    Qz = |s   c   |          c = cos(theta)  s
 /*
 1.若A为一个实对称矩阵，则A可以分解为A=UDU.transpose()，其中U为正交矩阵，D为实对角矩阵，因此一个实对称阵有实特征值，且其特征矢量两两相交
 2.若S为一个实的反对称阵，S=UBU.transpose()，其中B为形如diag(a1Z,a2Z,...,amZ,0,...,0)的分块对角矩阵，Z=|0  1|.S的特征矢量均为纯虚数且奇数阶反对称矩阵必为奇异的
-                                                                                                 |-1 0|
+                                                                                              |-1 0|
 */
 
 
@@ -1224,8 +1224,11 @@ int Initializer::CheckRT(const cv::Mat &R, const cv::Mat &t, const vector<cv::Ke
 void Initializer::DecomposeE(const cv::Mat &E, cv::Mat &R1, cv::Mat &R2, cv::Mat &t)
 {
     /*
+        |  0 1 0 |      | 0 -1 0 |
+    Z = | -1 0 0 |  W = | 1  0 0 |
+        |  0 0 0 |      | 0  0 1 |
     E = [t]xR  可得其等价E=SR，从而用S去表征t
-    若E的SVD分解为U*diag(1,1,0)*V',则E=SR可以有以下两种表示
+    若E的SVD分解为U*diag(1,1,0)*V',则E=SR可以有以下两种表示 E=U*diag(1, 1, 0)*V' = U*Z*W*V' = U*Z*U'*U*W*V' = (U*Z*U')*(U*W*V')
     S=UZU'  R=UWV'或R=UW'V'   t=U3=u(0,0,1)'
     */
     cv::Mat u,w,vt;

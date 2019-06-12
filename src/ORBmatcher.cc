@@ -63,35 +63,67 @@ ORBmatcher::ORBmatcher(float nnratio, bool checkOri): mfNNratio(nnratio), mbChec
 {
 }
 
+/*
+ * 1. set nmatches=0. if th is not 1, set bFactor tobe true; else set bFactor tobe false
+ * 2. for every mappoint in the input vector vpMapPoints
+ *    2.1 get the mappoint, if the mbTrackInView of the mappoint is false, continue to process next mappoint; if the mappoint is bad, continue to process next
+ *        mappoint
+ *    2.2 get the track scale level of the mappoint as nPredictedLevel
+ *    2.3 if the cos value of the mappoint is bigger than threshold, set r=2.5; else set r=4. If bFactor is true, multiply r by th
+ *    2.4 get vector of indices of the keypoints in F in the certain pixel range and certain levels of the pyramid as vIndices, if cannot get any index in the 
+ *        above step,continue to process next mappoint
+ *    2.5 get the descriptor of the mappoint
+ *    2.6 for every candidate match in vIndices
+ *        2.6.1 get its index in frame F, get the corresponding map point in frame F, if it is not a null pointer and the observations of the mapppoint is 
+ *              bigger than 0, continue to process next point
+ *        2.6.2 if the muvRight of F is bigger than 0, compute error as absolute mTrackProjXR of mappoint minus muvRight of F, if error is bigger than 
+ *              the threshold, continue to process next candidate
+ *        2.6.3 get the descriptor of the candidate, compute the distance between the mappoint descriptor and candidate descriptor, find the smallest and 
+ *              second smallest distance, record the idx, level and distance of the smallest; and record distance and level for the second smallest
+ *    2.7 if the smallest distance is no more than the threshold, if level of smallest distance is equal to level of second smallest and smallest diatance is
+ *        bigger than a param multiply the second smallest distance, continue to process next mappoint
+ *        set the mappoint of the smallest index tobe the current mappoint and add nmatches by 1 
+ * 3. return how many mappoints in the inpput vector find match in frame F, i.e. nmatches
+ */
+/*
+ * use the projected coordinate of the mappoint to find candidate for it in the input frame F, if it really matches, set the mappoint of frame F tobe the 
+ * mappoint in the input vector vpMapPoints, finally after process all mapppoints in vpMapPoints, return the number of matches found
+ */
 int ORBmatcher::SearchByProjection(Frame &F, const vector<MapPoint*> &vpMapPoints, const float th)//图像帧与地图点之间
 {
     int nmatches=0;
 
+    //if th is not 1, set bFactor tobe true, else set bFactor tobe false
     const bool bFactor = th!=1.0; //th不为1时，bFactor为true否则为false
 
+    // for all map points in the input vector
     for(size_t iMP=0; iMP<vpMapPoints.size(); iMP++)//对于地图点集合中的每一个地图点
     {
         MapPoint* pMP = vpMapPoints[iMP];
-        if(!pMP->mbTrackInView)
+        if(!pMP->mbTrackInView)// if the mbTrackInView of the mappoint is false, continue to process next mappoint
             continue;
 
-        if(pMP->isBad())
+        if(pMP->isBad())// if the mappoint is bad, continue to process next point
             continue;
 
+        // get the track scale level of the mappoint
         const int &nPredictedLevel = pMP->mnTrackScaleLevel;
 
         // The size of the window will depend on the viewing direction
+        // if the cos value is bigger than threshold, set r=2.5; else set r=4
         float r = RadiusByViewingCos(pMP->mTrackViewCos);//若cos较大r为2.5，较小r为4
 
-        if(bFactor)
+        if(bFactor)// if bFactor is true, multiply r by th
             r*=th;
         //取出在金字塔某些层和图片像素范围内的关键点，返回的是包含关键点下标的向量
+        // get vector of indices of the keypoints in the certain pixel range and certain levels in the pyramid
         const vector<size_t> vIndices =
                 F.GetFeaturesInArea(pMP->mTrackProjX,pMP->mTrackProjY,r*F.mvScaleFactors[nPredictedLevel],nPredictedLevel-1,nPredictedLevel);
 
-        if(vIndices.empty())
+        if(vIndices.empty())// if cannot get some candidate matches in F, continue to process next mappoint
             continue;
 
+        // get the descriptor of the mappoint
         const cv::Mat MPdescriptor = pMP->GetDescriptor();//取出地图点描述子
 
         int bestDist=256;
@@ -102,14 +134,19 @@ int ORBmatcher::SearchByProjection(Frame &F, const vector<MapPoint*> &vpMapPoint
 
         // Get best and second matches with near keypoints
         // 找到地图点重投影点附近的图片像素最佳与次佳匹配
+        // for every candidate match in vIndices
         for(vector<size_t>::const_iterator vit=vIndices.begin(), vend=vIndices.end(); vit!=vend; vit++)//对于所有与地图点投影接近的图片像素点
         {
-            const size_t idx = *vit;
+            const size_t idx = *vit;// get its index in frame F
 
+            // get the corresponding map point in frame F, if it is not a null pointer and the observations of the mapppointis bigger than 0, continue
+            // to process next point
             if(F.mvpMapPoints[idx])//取出图片下标对应的地图点，若该地图点的观测次数大于0，则继续处理下一个图片点
                 if(F.mvpMapPoints[idx]->Observations()>0)
                     continue;
 
+            // if the muvRight of F is bigger than 0, compute error as absolute mTrackProjXR of mappoint minus muvRight of F, if error is bigger than 
+            // the threshold, continue to process next candidate
             if(F.mvuRight[idx]>0)//若帧中存在右视图，若重投影右视图横坐标与右目横坐标差的绝对值过大，则继续处理下一个图像点
             {
                 const float er = fabs(pMP->mTrackProjXR-F.mvuRight[idx]);
@@ -117,10 +154,14 @@ int ORBmatcher::SearchByProjection(Frame &F, const vector<MapPoint*> &vpMapPoint
                     continue;
             }
 
+            // get the descriptor of the candidate
             const cv::Mat &d = F.mDescriptors.row(idx);//取出图像点描述子
 
+            //compute the distance between the mappoint descriptor and candidate descriptor
             const int dist = DescriptorDistance(MPdescriptor,d);//计算图像点描述子与地图点描述子的汉明距离
 
+            // find the smallest and second smallest distance, record the idx, level and distance of the smallest; and record distance and level for 
+            // the second smallest
             if(dist<bestDist)//若距离小于当前最小距离
             {
                 //将当前最小距离的相关参数赋值给次小距离，将当前点相关参数赋值给最小距离
@@ -137,6 +178,9 @@ int ORBmatcher::SearchByProjection(Frame &F, const vector<MapPoint*> &vpMapPoint
             }
         }
 
+        /* if the smallest distance is no more than the threshold, if level of smallest distance is equal to level of second smallest and smallest diatance is
+           bigger than a param multiply the second smallest distance, continue to process next mappoint
+           set the mappoint of the smallest index tobe the current mappoint and add nmatches by 1 */
         // Apply ratio to second match (only if best and second are in the same scale level)
         if(bestDist<=TH_HIGH)//若最佳距离小于一定阈值
         {
@@ -148,7 +192,7 @@ int ORBmatcher::SearchByProjection(Frame &F, const vector<MapPoint*> &vpMapPoint
         }
     }
 
-    return nmatches;//返回地图点向量中在图片找到匹配的地图点个数
+    return nmatches;//返回地图点向量中在图片找到匹配的地图点个数  return how many mappoints in the inpput vector find match in frame F
 }
 
 float ORBmatcher::RadiusByViewingCos(const float &viewCos)
@@ -184,12 +228,27 @@ bool ORBmatcher::CheckDistEpipolarLine(const cv::KeyPoint &kp1,const cv::KeyPoin
     return dsqr<3.84*pKF2->mvLevelSigma2[kp2.octave];//若距离较小则返回真，否则假
 }
 
+/*
+ * 1. get all map points in the key frame
+ * 2. initialize a vector of null map point pointers whose size is the number of keypoints in the  named vpMapPointMatches
+ * 3. for the same treenodes in keyframes and frames,get their corresponding indexes of features in the image as vIndicesKF and vIndicesF
+ *    3.1 for every index in vIndicesKF
+ *        3.1.1 get the corresponding map point,if it is a null pointer or bad point, continue toprocess the next feature
+ *        3.1.2 get the descriptor of that feature point, compute the smallest and second smallest feature point among all feature points in vIndicesF
+ *        3.1.3 if the smallest distance is smaller than a certain threshold and is smaller than a certain ratio multiply the second smallest distance, set
+ *              the mappoint with the index correspond to the smallest distance in vpMapPointMatches tobe the mapppoint in keyframe
+ *        3.1.4 devide the 360 degree into 30 parts,each one represents 12 degree, compute the angle distance of the feature in keyframe and frame, push the index
+ *              corresponding to the smallest distance into the histogram's  
+ *  4. if the element in vpMapPointMatches do not belong to the first,second and third number part in the histogram, set the pointer to null
+ */
 int ORBmatcher::SearchByBoW(KeyFrame* pKF,Frame &F, vector<MapPoint*> &vpMapPointMatches)//关键帧与图像帧之间
 {
     const vector<MapPoint*> vpMapPointsKF = pKF->GetMapPointMatches();//取出关键帧中所有地图点
 
     vpMapPointMatches = vector<MapPoint*>(F.N,static_cast<MapPoint*>(NULL));//将向量初始化为大小为帧中关键点个数，元素为空指针的向量
 
+    // class FeatureVector:public std::map<NodeId, std::vector<unsigned int> > NodeId is the index of the node in the 
+    // tree, std::vector<unsigned int> retains the indexes of the features
     const DBoW2::FeatureVector &vFeatVecKF = pKF->mFeatVec;
 
     int nmatches=0;
@@ -1374,11 +1433,48 @@ int ORBmatcher::SearchBySim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint*> &
 }
 
 /*两个帧之间的关系*/
+/*
+ * 1. compute the tlc using the last frame pose and the current frame pose. If the current camera pose in the last frame is bigger than the baseline
+ *    and this is not the monocular case, set bForward tobe true; if the opposite of current camera in the last frame is bigger than the baseline and 
+ *    this is not the monocular case, set bBackward tobe true
+ * 2. for all keypoints in last frame, get the map points related with the keypoints in the last frame, if the map point is not a null pointer and the mappoint 
+ *    in last frame is not marked as outlier
+ *    2.1 get the 3D position in the world coordinate, use the pose of current frame in the world coordinate to compute the 3D position in the current frame, if
+ *        the depth in current frame is negative, continue to process the next point
+ *    2.2 use the 3D position in the camera coordinate to compute the coordinate in the current frame image, if the projection of the mappoint in current frame is
+ *        out of the image bound, continue to process next mappoint
+ *    2.3 get the octave of the keypoint in the last frame pyramid, compute the window radius according to the scale factor in current frame of octave in last 
+ *        frame, later, we will search corresponding keypoints in current frame in the window 
+ *    2.4 for different cases, search the corresponding keypoint in different levels in the pyramid
+ *        2.4.1 if bForward is true, it means the camera is getting closer to the keypoints, the keypoints get bigger in the image, so we will
+ *              search the corresponding keypoints in higher level of the pyramid
+ *        2.4.2 if bBackward is true, it means the camera is getting farer to the keypoints, the keypoints get smaller in the image, so we will
+ *              search the corresponding keypoints in lower level of the pyramid
+ *        2.4.3 else, search the corresponding keypoints in the neighbor level
+ *        we can get a vector of corresponding indexes in the above mentioned way, if we can not find any corresponding keypoints, skip this point and process 
+ *        the next mappoint in last frame
+ *    2.5 get the descriptor of the map point in the last frame, for all the candidates computed in 2.4
+ *        2.5.1 get the map point corresponding to this keypoint, if the observations of this point is bigger than 0, continue to process next keypoint
+ *        2.5.2 if this is a stereo case, use the depth computed above and the f*baseline to predict the u coordinate in the right image, compute the
+ *              error between the predicted coordinate and the one in the muvRight vector, if it is bigger than the threshold, continue to compute 
+ *              next candidate point
+ *        2.5.3 compute the distance of descriptor between the last frame mappoint and the current frame candidate, get the best distance and the
+ *              corresponding index
+ *    2.6 if the best distance is less than the threshold, set the element whose index is the best distance index in the vector mvpMapPoint tobe
+ *        the mappoint and add the nmatches by 1, put the index into the corresponding vector in rotHist
+ * 3. if mbCheckOrientation is true
+ *    3.1 compute the three index with biggest vector size in rotHist, if the second_biggest_size<0.1*biggest_size, set ind2 and ind3 to -1; if the 
+ *        third_biggest_size<0.1*biggest_size, set ind3 tobe -1
+ *    3.2 for every vector in the rotHist with index not belong to {ind1, ind2, ind3}, set the mappoint pointers in it tobe null
+ *        pointers, and for every map point decrease nmatches by 1
+ * 4. return the number of valid matches
+ */
 int ORBmatcher::SearchByProjection(Frame &CurrentFrame, const Frame &LastFrame, const float th, const bool bMono)
 {
     int nmatches = 0;
 
     // Rotation Histogram (to check rotation consistency)检查旋转一致性
+    // create 30 vector of int type
     vector<int> rotHist[HISTO_LENGTH];//构建具有HISTO_LENGTH栏的直方图，每栏中是一个int型的向量
     for(int i=0;i<HISTO_LENGTH;i++)
         rotHist[i].reserve(500);
@@ -1390,25 +1486,35 @@ int ORBmatcher::SearchByProjection(Frame &CurrentFrame, const Frame &LastFrame, 
     Pc=Rcw*Pw+tcw    Pw=Rcw.inverse()*Pc-Rcw.inverse*tcw=Rcw.transpose()*Pc-Rcw.transpose()*tcw
     对于相机光心，Pc为0，Pw=-Rcw.transpose()*tcw
     */
+    // compute the position of the current camera in the world coordinate
     const cv::Mat twc = -Rcw.t()*tcw;//当前帧光心在世界坐标系下的坐标
 
     const cv::Mat Rlw = LastFrame.mTcw.rowRange(0,3).colRange(0,3);
     const cv::Mat tlw = LastFrame.mTcw.rowRange(0,3).col(3);
     /*Pl = Rlw*Pw + tlw   将当前帧光心在世界坐标系下的坐标转为当前帧光心在上一帧坐标系下的坐标*/
+    // use the current position in the world coordinate and the pose of last frame in the world coordinate to compute the camera position in the last frame
     const cv::Mat tlc = Rlw*twc+tlw;
 
+    // if the current camera pose in the last frame is bigger than the baseline of current frame and it's not the monocular case, set bForward tobe true
+    // if the opposite of current camera pose in the last frame is bigger than the baseline of current frame and it's not the monocular case, set
+    // bBackward tobe true
     const bool bForward = tlc.at<float>(2)>CurrentFrame.mb && !bMono;//若当前帧光心在上一帧相机坐标系下深度大于基线长度且非单目，则置bForward为真
     const bool bBackward = -tlc.at<float>(2)>CurrentFrame.mb && !bMono;//若负深度大于基线长度且非单目，则置bBackward为真
 
+    // for all keypoints in the last frame
     for(int i=0; i<LastFrame.N; i++)//对于上一帧中所有关键点
     {
+        // get the map points related with the keypoints in the last frame
         MapPoint* pMP = LastFrame.mvpMapPoints[i];//取出关键点对应的地图点
 
+        // if the mappoint pointer is not none
         if(pMP)//若地图点非空
         {
+            // if the map point is not marked as an outlier in the last frame
             if(!LastFrame.mvbOutlier[i])
             {
                 // Project
+                // get the 3D position in the world coordinate, use the pose of current frame in the world coordinate to compute the 3D position in the current frame
                 cv::Mat x3Dw = pMP->GetWorldPos();//地图点世界坐标系下的坐标
                 cv::Mat x3Dc = Rcw*x3Dw+tcw;//地图点在当前帧相机坐标系下的坐标
 
@@ -1416,24 +1522,37 @@ int ORBmatcher::SearchByProjection(Frame &CurrentFrame, const Frame &LastFrame, 
                 const float yc = x3Dc.at<float>(1);
                 const float invzc = 1.0/x3Dc.at<float>(2);
 
+                // if the depth is negative, skip this keypoint and continue to process the next one
                 if(invzc<0)//若深度为负，则跳过这个上一帧中关键点继续处理下一个关键点
                     continue;
 
+                // use the 3D position in the camera coordinate to compute the coordinate in the current frame image
                 float u = CurrentFrame.fx*xc*invzc+CurrentFrame.cx;//从相机坐标系变换到当前帧图像坐标系
                 float v = CurrentFrame.fy*yc*invzc+CurrentFrame.cy;
 
+                // if the projection of the mappoint in current frame is out of the image bound, continue to process next mappoint
                 if(u<CurrentFrame.mnMinX || u>CurrentFrame.mnMaxX)//若投影不在图片幅面内，则跳过这个地图点处理下一个地图点
                     continue;
                 if(v<CurrentFrame.mnMinY || v>CurrentFrame.mnMaxY)
                     continue;
 
+                // get the octave of the keypoint in the last frame pyramid
                 int nLastOctave = LastFrame.mvKeys[i].octave;//取出这个关键点在上一帧中对应的金字塔层数
 
                 // Search in a window. Size depends on scale
+                // compute the window radius according to the scale factor in current frame of octave in last frame, later, we will search 
+                // corresponding keypoints in current frame in the window 
                 float radius = th*CurrentFrame.mvScaleFactors[nLastOctave];//计算一个半径，在一定区域内查找关键点
 
                 vector<size_t> vIndices2;
                 //对于不同情况，在不同金字塔层中搜索关键点
+                /* 
+                1. if bForward is true, it means the camera is getting closer to the keypoints, the keypoints get bigger in the image, so we will
+                   search the corresponding keypoints in higher level of the pyramid
+                2. if bBackward is true, it means the camera is getting farer to the keypoints, the keypoints get smaller in the image, so we will
+                   search the corresponding keypoints in lower level of the pyramid
+                3. else, search the corresponding keypoints in the neighbor levels
+                */
                 if(bForward)
                     vIndices2 = CurrentFrame.GetFeaturesInArea(u,v, radius, nLastOctave);
                 else if(bBackward)
@@ -1441,14 +1560,25 @@ int ORBmatcher::SearchByProjection(Frame &CurrentFrame, const Frame &LastFrame, 
                 else
                     vIndices2 = CurrentFrame.GetFeaturesInArea(u,v, radius, nLastOctave-1, nLastOctave+1);
 
+                // if we can not find any corresponding keypoints, skip this point and process the next mappoint in last frame
                 if(vIndices2.empty())//若当前帧投影点附近没有关键点，跳过这个上一帧关键点继续处理下一个上一帧关键点
                     continue;
 
+                // get the descriptor of the map point in the last frame
                 const cv::Mat dMP = pMP->GetDescriptor();//取出地图点的描述子
 
                 int bestDist = 256;
                 int bestIdx2 = -1;
 
+                /*
+                 * for all candidate keypoints in the vector
+                 *    1. get the map point corresponding to this keypoint, if the observations of this point is bigger than 0, continue to process next keypoint
+                 *    2. if this is a stereo case, use the depth computed above and the f*baseline to predict the u coordinate in the right image, compute the
+                 *       error between the predicted coordinate and the one in the muvRight vector, if it is bigger than the threshold, continue to compute 
+                 *       next candidate point
+                 *    3. compute the distance of descriptor between the last frame mappoint and the current frame candidate, get the best distance and the
+                 *       corresponding index
+                 */
                 for(vector<size_t>::const_iterator vit=vIndices2.begin(), vend=vIndices2.end(); vit!=vend; vit++)//对于投影点附近所有关键点
                 {
                     const size_t i2 = *vit;
@@ -1476,6 +1606,8 @@ int ORBmatcher::SearchByProjection(Frame &CurrentFrame, const Frame &LastFrame, 
                     }
                 }//结束对投影点附近关键点的遍历
 
+                // if the best distance is less than the threshold, set the element whose index is the best distance index in the vector mvpMapPoint tobe
+                // the mappoint and add the nmatches by 1, put the index into the corresponding vector in rotHist
                 if(bestDist<=TH_HIGH)//若最佳关键点与地图点描述子距离小于阈值
                 {
                     CurrentFrame.mvpMapPoints[bestIdx2]=pMP;//记当前帧中最佳关键点为上一帧中取出的地图点
@@ -1504,8 +1636,16 @@ int ORBmatcher::SearchByProjection(Frame &CurrentFrame, const Frame &LastFrame, 
         int ind2=-1;
         int ind3=-1;
 
+        /*
+        compute the three index with biggest vector size in rotHist, if the second_biggest_size<0.1*biggest_size, set ind2 and ind3 to -1; if the 
+        third_biggest_size<0.1*biggest_size, set ind3 tobe -1
+        */
         ComputeThreeMaxima(rotHist,HISTO_LENGTH,ind1,ind2,ind3);
 
+        /*
+        for every vector in the rotHist with index not belong to {ind1, ind2, ind3}, set the mappoint pointers in it tobe null
+        pointers, and for every map point decrease nmatches by 1
+        */
         for(int i=0; i<HISTO_LENGTH; i++)
         {
             if(i!=ind1 && i!=ind2 && i!=ind3)
@@ -1759,7 +1899,7 @@ dist为32位2进制，1位16进制为4位2进制，32位2进制代表8位16进�
     0000        sum17_18_19_20_21_22_23_24      0000         sum25_26_27_28_29_30_31_32
      0000          sum9_10_11_12_13_14_15_16       0000        sum17_18_19_20_21_22_23_24      0000         sum25_26_27_28_29_30_31_32
     0000             sum1_2_3_4_5_6_7_8            0000          sum9_10_11_12_13_14_15_16       0000        sum17_18_19_20_21_22_23_24      0000         sum25_26_27_28_29_30_31_32
-此时最大可能值为32,需要6位二进制两位16进制表示，故而下列结果将两位16进制写在一起，假发结果为
+此时最大可能值为32,需要6位二进制两位16进制表示，故而下列结果将两位16进制写在一起，加法结果为
 sum1_2_3_4_5_6_7_8_9_10_11_12_13_14_15_16_17_18_19_20_21_22_23_24_25_26_27_28_29_30_31_32   sum9_10_11_12_13_14_15_16_17_18_19_20_21_22_23_24_25_26_27_28_29_30_31_32   sum17_18_19_20_21_22_23_24_25_26_27_28_29_30_31_32   sum25_26_27_28_29_30_31_32
 向右移24位可得sum1_2_3_4_5_6_7_8_9_10_11_12_13_14_15_16_17_18_19_20_21_22_23_24_25_26_27_28_29_30_31_32 即为二进制串中1的个数
 */

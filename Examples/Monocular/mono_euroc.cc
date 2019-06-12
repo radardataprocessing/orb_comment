@@ -30,9 +30,11 @@
 
 using namespace std;
 
+// get the filenames of the images and their corresponding time from the file strPathTimes
 void LoadImages(const string &strImagePath, const string &strPathTimes,
                 vector<string> &vstrImages, vector<double> &vTimeStamps);
 
+// the arguments needed are 1.voc file 2.settings file 3.image path 4.path times
 int main(int argc, char **argv)
 {
     if(argc != 5)
@@ -42,11 +44,11 @@ int main(int argc, char **argv)
     }
 
     // Retrieve paths to images
-    vector<string> vstrImageFilenames;
-    vector<double> vTimestamps;
+    vector<string> vstrImageFilenames;// image filenames
+    vector<double> vTimestamps; // time stamps in seconds
     LoadImages(string(argv[3]), string(argv[4]), vstrImageFilenames, vTimestamps);
 
-    int nImages = vstrImageFilenames.size();
+    int nImages = vstrImageFilenames.size();// number of the image files
 
     if(nImages<=0)
     {
@@ -55,6 +57,7 @@ int main(int argc, char **argv)
     }
 
     // Create SLAM system. It initializes all system threads and gets ready to process frames.
+    // the parameters are 1.vocabulary file 2.settings file 3.sensor mode 4.use viewer or not
     ORB_SLAM2::System SLAM(argv[1],argv[2],ORB_SLAM2::System::MONOCULAR,true);
 
     // Vector for tracking time statistics
@@ -69,7 +72,7 @@ int main(int argc, char **argv)
     cv::Mat im;
     for(int ni=0; ni<nImages; ni++)
     {
-        // Read image from file
+        // Read image from file  get the corresponding image and timestamp
         im = cv::imread(vstrImageFilenames[ni],CV_LOAD_IMAGE_UNCHANGED);
         double tframe = vTimestamps[ni];
 
@@ -97,7 +100,7 @@ int main(int argc, char **argv)
 
         double ttrack= std::chrono::duration_cast<std::chrono::duration<double> >(t2 - t1).count();
 
-        vTimesTrack[ni]=ttrack;
+        vTimesTrack[ni]=ttrack;// the size of vTimesTrack is the number of the images, the vector keeps the tracking time of the image
 
         // Wait to load the next frame
         double T=0;
@@ -110,7 +113,7 @@ int main(int argc, char **argv)
             usleep((T-ttrack)*1e6);
     }
 
-    // Stop all threads
+    // Stop all threads, shut down the slam system
     SLAM.Shutdown();
 
     // Tracking time statistics
@@ -137,7 +140,7 @@ void LoadImages(const string &strImagePath, const string &strPathTimes,
     fTimes.open(strPathTimes.c_str());
     vTimeStamps.reserve(5000);
     vstrImages.reserve(5000);
-    while(!fTimes.eof())
+    while(!fTimes.eof()) //while the file still have more contents, get the filenames of the images and their corresponding time
     {
         string s;
         getline(fTimes,s);

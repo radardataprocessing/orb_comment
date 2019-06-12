@@ -40,6 +40,7 @@ LoopClosing::LoopClosing(Map *pMap, KeyFrameDatabase *pDB, ORBVocabulary *pVoc, 
     mpKeyFrameDB(pDB), mpORBVocabulary(pVoc), mpMatchedKF(NULL), mLastLoopKFid(0), mbRunningGBA(false), mbFinishedGBA(true),
     mbStopGBA(false), mpThreadGBA(NULL), mbFixScale(bFixScale), mnFullBAIdx(0)
 {
+    // mnCovisibilityConsistencyTh is a loop detection parameter
     mnCovisibilityConsistencyTh = 3;
 }
 
@@ -620,7 +621,7 @@ void LoopClosing::RequestReset()
         mbResetRequested = true;
     }
 
-    while(1)
+    while(1)// wait until the mbResetRequested flag to turn false
     {
         {
         unique_lock<mutex> lock2(mMutexReset);

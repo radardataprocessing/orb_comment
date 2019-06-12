@@ -93,6 +93,12 @@ int main(int argc, char **argv)
         return -1;
     }
 
+    /*
+     * void initUndistortRectifyMap(InputArray cameraMatrix, InputArray distCoeffs, InputArray R, InputArray newCameraMatrix, Size size, int m1type,
+     *                              OutputArray map1, OutputArray map2)
+     * cameraMatrix refers to refers to the camera matrix, i.e. [[fx, 0, cx], [0, fy, cy],[0, 0, 1]]
+     * size refers to the undistorted image size
+     */
     cv::Mat M1l,M2l,M1r,M2r;
     cv::initUndistortRectifyMap(K_l,D_l,R_l,P_l.rowRange(0,3).colRange(0,3),cv::Size(cols_l,rows_l),CV_32F,M1l,M2l);
     cv::initUndistortRectifyMap(K_r,D_r,R_r,P_r.rowRange(0,3).colRange(0,3),cv::Size(cols_r,rows_r),CV_32F,M1r,M2r);
@@ -105,6 +111,7 @@ int main(int argc, char **argv)
 
     // Vector for tracking time statistics
     vector<float> vTimesTrack;
+    // nImages is the number of images
     vTimesTrack.resize(nImages);
 
     cout << endl << "-------" << endl;
@@ -113,6 +120,7 @@ int main(int argc, char **argv)
 
     // Main loop
     cv::Mat imLeft, imRight, imLeftRect, imRightRect;
+    // for each image in the sequence
     for(int ni=0; ni<nImages; ni++)
     {
         // Read left and right images from file
@@ -133,6 +141,7 @@ int main(int argc, char **argv)
             return 1;
         }
 
+        // rectify the stereo image using the map matrix computed above
         cv::remap(imLeft,imLeftRect,M1l,M2l,cv::INTER_LINEAR);
         cv::remap(imRight,imRightRect,M1r,M2r,cv::INTER_LINEAR);
 
@@ -154,9 +163,9 @@ int main(int argc, char **argv)
         std::chrono::monotonic_clock::time_point t2 = std::chrono::monotonic_clock::now();
 #endif
 
-        double ttrack= std::chrono::duration_cast<std::chrono::duration<double> >(t2 - t1).count();
+        double ttrack= std::chrono::duration_cast<std::chrono::duration<double> >(t2 - t1).count();// compute the process time
 
-        vTimesTrack[ni]=ttrack;
+        vTimesTrack[ni]=ttrack;// store the process time of every image
 
         // Wait to load the next frame
         double T=0;
@@ -173,15 +182,15 @@ int main(int argc, char **argv)
     SLAM.Shutdown();
 
     // Tracking time statistics
-    sort(vTimesTrack.begin(),vTimesTrack.end());
+    sort(vTimesTrack.begin(),vTimesTrack.end());// sort the track time for every frame
     float totaltime = 0;
     for(int ni=0; ni<nImages; ni++)
     {
         totaltime+=vTimesTrack[ni];
     }
     cout << "-------" << endl << endl;
-    cout << "median tracking time: " << vTimesTrack[nImages/2] << endl;
-    cout << "mean tracking time: " << totaltime/nImages << endl;
+    cout << "median tracking time: " << vTimesTrack[nImages/2] << endl;// get the median tracking time
+    cout << "mean tracking time: " << totaltime/nImages << endl;// get the mean tracking time
 
     // Save camera trajectory
     SLAM.SaveTrajectoryTUM("CameraTrajectory.txt");

@@ -766,7 +766,7 @@ void LocalMapping::RequestReset()
         mbResetRequested = true;
     }
 
-    while(1)
+    while(1) // wait until the mbResetRequested to turn false
     {
         {
             unique_lock<mutex> lock2(mMutexReset);

@@ -23,7 +23,7 @@
 
 namespace ORB_SLAM2
 {
-
+/*将描述子Mat中的一行行取出作为独立的Mat存入vector中*/
 std::vector<cv::Mat> Converter::toDescriptorVector(const cv::Mat &Descriptors)
 {
     std::vector<cv::Mat> vDesc;
@@ -34,6 +34,7 @@ std::vector<cv::Mat> Converter::toDescriptorVector(const cv::Mat &Descriptors)
     return vDesc;
 }
 
+/*g2o::SE3Quat包含四元数与一个平移向量*/
 g2o::SE3Quat Converter::toSE3Quat(const cv::Mat &cvT)
 {
     Eigen::Matrix<double,3,3> R;
@@ -46,12 +47,18 @@ g2o::SE3Quat Converter::toSE3Quat(const cv::Mat &cvT)
     return g2o::SE3Quat(R,t);
 }
 
+/*homogeneous齐次的
+将四元数与平移向量转为4*4的齐次矩阵*/
 cv::Mat Converter::toCvMat(const g2o::SE3Quat &SE3)
 {
     Eigen::Matrix<double,4,4> eigMat = SE3.to_homogeneous_matrix();
     return toCvMat(eigMat);
 }
 
+/*g2o::Sim3包含四元数、平移向量以及尺度因子
+将g2o::Sim3转换为一个4*4矩阵
+| sR t |
+|  0 1 |其中sR为3*3，t为3*1*/
 cv::Mat Converter::toCvMat(const g2o::Sim3 &Sim3)
 {
     Eigen::Matrix3d eigR = Sim3.rotation().toRotationMatrix();
@@ -60,6 +67,7 @@ cv::Mat Converter::toCvMat(const g2o::Sim3 &Sim3)
     return toCvSE3(s*eigR,eigt);
 }
 
+/*将4*4的double型Eigen::Matrix转换为4*4的float型cv::Mat*/
 cv::Mat Converter::toCvMat(const Eigen::Matrix<double,4,4> &m)
 {
     cv::Mat cvMat(4,4,CV_32F);
@@ -70,6 +78,7 @@ cv::Mat Converter::toCvMat(const Eigen::Matrix<double,4,4> &m)
     return cvMat.clone();
 }
 
+/*将3*3的double型Eigen::Matrix转换为3*3的float型cv::Mat*/
 cv::Mat Converter::toCvMat(const Eigen::Matrix3d &m)
 {
     cv::Mat cvMat(3,3,CV_32F);
@@ -80,6 +89,7 @@ cv::Mat Converter::toCvMat(const Eigen::Matrix3d &m)
     return cvMat.clone();
 }
 
+/*将3*1的double型Eigen::Matrix转换为3*1的float型cv::Mat*/
 cv::Mat Converter::toCvMat(const Eigen::Matrix<double,3,1> &m)
 {
     cv::Mat cvMat(3,1,CV_32F);
@@ -89,6 +99,7 @@ cv::Mat Converter::toCvMat(const Eigen::Matrix<double,3,1> &m)
     return cvMat.clone();
 }
 
+/**/
 cv::Mat Converter::toCvSE3(const Eigen::Matrix<double,3,3> &R, const Eigen::Matrix<double,3,1> &t)
 {
     cv::Mat cvMat = cv::Mat::eye(4,4,CV_32F);

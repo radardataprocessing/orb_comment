@@ -74,6 +74,11 @@ const int HALF_PATCH_SIZE = 15;
 const int EDGE_THRESHOLD = 19;
 
 
+/*
+ * 1. set the pixel value of the input point as the center of the uchar pointer
+ * 2. compute m_01 and m_10 in the circular patch( m_01 and m_10 is the first order moment of the column and row)
+ * 3. set the angle as atan(m_01, m_10)
+ */
 static float IC_Angle(const Mat& image, Point2f pt,  const vector<int> & u_max)
 {
     int m_01 = 0, m_10 = 0;
@@ -84,7 +89,7 @@ static float IC_Angle(const Mat& image, Point2f pt,  const vector<int> & u_max)
     for (int u = -HALF_PATCH_SIZE; u <= HALF_PATCH_SIZE; ++u)
         m_10 += u * center[u];//求取窗口在当前行的加权像素和
 
-    // Go line by line in the circuI853lar patch
+    // Go line by line in the circular patch
     int step = (int)image.step1();
     for (int v = 1; v <= HALF_PATCH_SIZE; ++v)
     {
@@ -105,7 +110,7 @@ static float IC_Angle(const Mat& image, Point2f pt,  const vector<int> & u_max)
 }
 
 
-const float factorPI = (float)(CV_PI/180.f);
+const float factorPI = (float)(CV_PI/180.f);// the factor which can convert degree into radian
 static void computeOrbDescriptor(const KeyPoint& kpt,
                                  const Mat& img, const Point* pattern,
                                  uchar* desc)
@@ -113,9 +118,12 @@ static void computeOrbDescriptor(const KeyPoint& kpt,
     float angle = (float)kpt.angle*factorPI;//将关键点的角度从角度值转换到弧度制
     float a = (float)cos(angle), b = (float)sin(angle);//a为角度的余弦值,b为角度的正弦值
 
+    // center is a pointer of uchar type which points to the pixel value of the given key point
     const uchar* center = &img.at<uchar>(cvRound(kpt.pt.y), cvRound(kpt.pt.x));
     const int step = (int)img.step;
 
+    // (pattern[idx].x*b + pattern[idx].y*a) refers to the row coordinate of the point in the pattern
+    // this function has already take the angle of the key point into consideration, so the descriptor is invariant to rotation
     #define GET_VALUE(idx) \
         center[cvRound(pattern[idx].x*b + pattern[idx].y*a)*step + \
                cvRound(pattern[idx].x*a - pattern[idx].y*b)]
@@ -124,10 +132,11 @@ static void computeOrbDescriptor(const KeyPoint& kpt,
     x*cos(angle)-y*sin(angle)=sqrt(x*x+y*y)(cos(beta)*cos(angle)-sin(beta)*sin(angle)) = sqrt(x*x+y*y)*cos(angle+beta)
     */
 
-
+   //32 uchar values represents 32*8 pairs of points
     for (int i = 0; i < 32; ++i, pattern += 16)//32位uchar的描述子，每个uchar又是8位二进制
     {
         int t0, t1, val;
+        // the following operations means to take 8 pairs of points and compare their pixel value, 8 pairs of comparation results make a uchar type value 
         t0 = GET_VALUE(0); t1 = GET_VALUE(1);
         val = t0 < t1;
         t0 = GET_VALUE(2); t1 = GET_VALUE(3);
@@ -439,7 +448,8 @@ ORBextractor::ORBextractor(int _nfeatures, float _scaleFactor, int _nlevels,
 
     mnFeaturesPerLevel.resize(nlevels);//存储金字塔每一层对应的特征
     float factor = 1.0f / scaleFactor;
-    float nDesiredFeaturesPerScale = nfeatures*(1 - factor)/(1 - (float)pow((double)factor, (double)nlevels));//每层的期望特征数
+    //每层的期望特征数
+    float nDesiredFeaturesPerScale = nfeatures*(1 - factor)/(1 - (float)pow((double)factor, (double)nlevels));
     /*
     num*pow(factor, 0) + num*pow(factor, 1) + ... + num*pow(factor, n-1) = total_num
     num*(1-pow(factor, n))/(1-factor) = total_num
@@ -453,10 +463,14 @@ ORBextractor::ORBextractor(int _nfeatures, float _scaleFactor, int _nlevels,
         sumFeatures += mnFeaturesPerLevel[level];
         nDesiredFeaturesPerScale *= factor;
     }
-    mnFeaturesPerLevel[nlevels-1] = std::max(nfeatures - sumFeatures, 0);//总特征数－已经被其它层提取的特征数与0之间的最大值
+    mnFeaturesPerLevel[nlevels-1] = std::max(nfeatures - sumFeatures, 0);//(总特征数－已经被其它层提取的特征数)与0之间的最大值
 
     const int npoints = 512;
-    const Point* pattern0 = (const Point*)bit_pattern_31_;//typedef cv::Point2i Point    std::vector<cv::Point> pattern;
+    /* static int bit_pattern_31_[256*4], every 4 int values represents a pair of points, a uchar in the descriptor represents 8 pairs of points,
+     * 32 uchar values in the descriptor represents 256 pairs of points
+     */
+    const Point* pattern0 = (const Point*)bit_pattern_31_;
+    //typedef cv::Point2i Point    std::vector<cv::Point> pattern;
     std::copy(pattern0, pattern0 + npoints, std::back_inserter(pattern));
     /*back_inserter(foo),把当前iterator插入foo容器尾部，返回类型为back_insert_iterator， foo是需要有push_back成员函数的类型*/
 
@@ -464,8 +478,8 @@ ORBextractor::ORBextractor(int _nfeatures, float _scaleFactor, int _nlevels,
     // pre-compute the end of a row in a circular patch
     umax.resize(HALF_PATCH_SIZE + 1);
 
-    int v, v0, vmax = cvFloor(HALF_PATCH_SIZE * sqrt(2.f) / 2 + 1);//二分之根号二核的一半加一向上取整
-    int vmin = cvCeil(HALF_PATCH_SIZE * sqrt(2.f) / 2);//二分之根号二核的一半向下取整
+    int v, v0, vmax = cvFloor(HALF_PATCH_SIZE * sqrt(2.f) / 2 + 1);//二分之根号二核的一半加一向下取整
+    int vmin = cvCeil(HALF_PATCH_SIZE * sqrt(2.f) / 2);//二分之根号二核的一半向上取整
     const double hp2 = HALF_PATCH_SIZE*HALF_PATCH_SIZE;
     //求[0，cvFloor(HALF_PATCH_SIZE * sqrt(2.f) / 2 + 1)]区间内v所对应的最大u
     for (v = 0; v <= vmax; ++v)
@@ -486,6 +500,7 @@ static void computeOrientation(const Mat& image, vector<KeyPoint>& keypoints, co
     for (vector<KeyPoint>::iterator keypoint = keypoints.begin(),
          keypointEnd = keypoints.end(); keypoint != keypointEnd; ++keypoint)
     {
+        // the angle of the keypoint is atan(m_01, m_10), m_01 and m_10 is the two first order moment of column and row
         keypoint->angle = IC_Angle(image, keypoint->pt, umax);//对于所有特征点，求出其主方向
     }
 }
@@ -556,6 +571,14 @@ void ExtractorNode::DivideNode(ExtractorNode &n1, ExtractorNode &n2, ExtractorNo
 
 //在满足条件的情况下对节点进行不断分割，然后取出每个节点中响应最强的关键点送入容器中
 //list的成员函数，begin指迭代器，front指第一个元素变量
+/* 1. compute the number of initial nodes according to deltax/deltay
+ * 2. for those initial nodes, compute the for corners of the node, reserve the keypoint vector of the nodes to the number of the keypoints to be distributed
+ * 3. use the coordinate of the key point to put keypoints into the corresponding initial node 
+ * 4. if a node has only 1 keypoint, mark the bNoMore of the node to true, if a node has no keypoint, erase the node from the list
+ * until now, the list of nodes only has the initial nodes that has no less than 1 keypoint
+ * to be continued
+ */
+// divide the two dimension region into nodes, for every node, retain the best point in it
 vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>& vToDistributeKeys, const int &minX,
                                        const int &maxX, const int &minY, const int &maxY, const int &N, const int &level)
 {
@@ -564,6 +587,7 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
 
     const float hX = static_cast<float>(maxX-minX)/nIni;//每一个水平单元的大小
 
+    // ExtractorNode is a structure representing a node in the tree
     list<ExtractorNode> lNodes;
 
     vector<ExtractorNode*> vpIniNodes;
@@ -572,17 +596,18 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
     for(int i=0; i<nIni; i++) //对于那些初始节点，求节点四个角点，将每个节点关键点个数设置为待分配关键点集合的大小，将节点放入链表中，且设置向量中的节点为链表元素引用
     {
         ExtractorNode ni;
-        ni.UL = cv::Point2i(hX*static_cast<float>(i),0);
-        ni.UR = cv::Point2i(hX*static_cast<float>(i+1),0);
-        ni.BL = cv::Point2i(ni.UL.x,maxY-minY);
-        ni.BR = cv::Point2i(ni.UR.x,maxY-minY);
+        ni.UL = cv::Point2i(hX*static_cast<float>(i),0);// the upper left corner of the node(the node is a two demension rectangle in the image)
+        ni.UR = cv::Point2i(hX*static_cast<float>(i+1),0);// the upper right corner of the node
+        ni.BL = cv::Point2i(ni.UL.x,maxY-minY);// the bottom left corner of the node
+        ni.BR = cv::Point2i(ni.UR.x,maxY-minY);// the bottom right corner of the node
         ni.vKeys.reserve(vToDistributeKeys.size());
 
-        lNodes.push_back(ni);
-        vpIniNodes[i] = &lNodes.back();
+        lNodes.push_back(ni);// put the current node into the list of nodes
+        vpIniNodes[i] = &lNodes.back();// put the pointer of the current node in the vector of ini nodes
     }
 
     //Associate points to childs   利用关键点位置，将关键点放入初始节点的关键点集合中
+    // use the coordinate of the key point to put keypoints into the corresponding initial node 
     for(size_t i=0;i<vToDistributeKeys.size();i++)
     {
         const cv::KeyPoint &kp = vToDistributeKeys[i];//待分配的关键点的容器
@@ -591,6 +616,7 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
 
     list<ExtractorNode>::iterator lit = lNodes.begin();
 
+    // if a node has only 1 keypoint, mark the bNoMore of the node to true, if a node has no keypoint, erase the node from the list
     while(lit!=lNodes.end())//若某节点包含一个关键点，则标记不再分割它，若不含关键点，从链表中去除这个节点
     {
         if(lit->vKeys.size()==1)
@@ -635,8 +661,10 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
             {
                 // If more than one point, subdivide 如果节点包含多于一个关键点，则继续分割
                 ExtractorNode n1,n2,n3,n4;
+                // divide the current node into 4 nodes and put the keypoints in them, if a node contains only 1 keypoint, mark bNoore to true
                 lit->DivideNode(n1,n2,n3,n4);
 
+                //if the subnode contains one or more keypoints, put the subnode into the list and erase the current node from the list
                 // Add childs if they contain points 若子节点关键点数目大于0，将子节点给入链表中；若子节点关键点数目大于1，
                 if(n1.vKeys.size()>0)
                 {
@@ -782,7 +810,14 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
     return vResultKeys;
 }
 
-/**/
+/*
+ * compute keypoints for every level in the pyramid
+ * 1. for each level of the pyramid
+ *    1) divide the image into ceils, in each ceil, first use the ini threshold to extract fast keypoints, if can not extract keypoints, use lower threshold to extract
+ *    2) for the keypoints extracted in the last step, divide the image into nodes, for every node, retain the best point in it
+ *    3) for every keypoint, set its coordinate, level in the pyramid and scaledPatchSize
+ * 2. for keypoints in each level of the pyramid, compute the orientation
+ */
 void ORBextractor::ComputeKeyPointsOctTree(vector<vector<KeyPoint> >& allKeypoints)
 {
     allKeypoints.resize(nlevels);//存储nlevels层金字塔每层的关键点
@@ -807,6 +842,9 @@ void ORBextractor::ComputeKeyPointsOctTree(vector<vector<KeyPoint> >& allKeypoin
         const int wCell = ceil(width/nCols);//wCell，hCell为列与行的栅格大小
         const int hCell = ceil(height/nRows);
 
+        /* this for circulation divide the current image into ceils, in each ceil, first use the ini threashold to extract fast keypoints, if can not extract
+         * keypoints, use lower threshold to extrct fast keypoints
+         */
         for(int i=0; i<nRows; i++)
         {
             const float iniY =minBorderY+i*hCell;
@@ -853,8 +891,9 @@ void ORBextractor::ComputeKeyPointsOctTree(vector<vector<KeyPoint> >& allKeypoin
         vector<KeyPoint> & keypoints = allKeypoints[level];
         keypoints.reserve(nfeatures);
 
+        // divide the two dimension region into nodes, for every node, retain the best point in it
         keypoints = DistributeOctTree(vToDistributeKeys, minBorderX, maxBorderX,
-                                      minBorderY, maxBorderY,mnFeaturesPerLevel[level], level);//将这层金字塔的所有特征点放入树中重新排布并在单个节点进行抑制
+                                      minBorderY, maxBorderY, mnFeaturesPerLevel[level], level);//将这层金字塔的所有特征点放入树中重新排布并在单个节点进行抑制
 
         const int scaledPatchSize = PATCH_SIZE*mvScaleFactor[level];
 
@@ -865,11 +904,11 @@ void ORBextractor::ComputeKeyPointsOctTree(vector<vector<KeyPoint> >& allKeypoin
             keypoints[i].pt.x+=minBorderX;
             keypoints[i].pt.y+=minBorderY;
             keypoints[i].octave=level;
-            keypoints[i].size = scaledPatchSize;
+            keypoints[i].size = scaledPatchSize;//PATCH_SIZE*scale_factor_of_current_level
         }
     } //结束对各层金字塔的循环
 
-    // compute orientations
+    // compute orientations of the keypoints for every level in the pyramid
     for (int level = 0; level < nlevels; ++level)
         computeOrientation(mvImagePyramid[level], allKeypoints[level], umax); //求出特征点的主方向
 }
@@ -1070,6 +1109,13 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
         computeOrbDescriptor(keypoints[i], image, &pattern[0], descriptors.ptr((int)i));
 }
 
+/* 1. pre-compute the image pyramid 
+ * 2. compute keypoints for every level of the pyramid, and compute their orientation(image was divided into octree nodes, for every node retain the best keypoint in it)
+ * 3. count the number of keypoints in all levels of the pyramid, set the descriptor mat to size(number of keypoints, 32),type CV_8UC1
+ * 4. for every level of the pyramid, gaussian blur the corresponding image, using the preset pattern to compute descriptor in the blurred image, if this is not the 0
+ *    level in the pyramid, multiply the keypoint cordinate with the scale factor of current level
+ * 5. insert the keypoints into the vector _keypoints, i.e. the third parameter of this function
+ */
 void ORBextractor::operator()( InputArray _image, InputArray _mask, vector<KeyPoint>& _keypoints,
                       OutputArray _descriptors)
 { 
@@ -1080,9 +1126,18 @@ void ORBextractor::operator()( InputArray _image, InputArray _mask, vector<KeyPo
     assert(image.type() == CV_8UC1 );
 
     // Pre-compute the scale pyramid计算金字塔每层的图片
+    // compute image mat for every level in the pyramid and save them into mvImagePyramid(std::vector<cv::Mat>)
     ComputePyramid(image);
 
     vector < vector<KeyPoint> > allKeypoints;
+    /*
+    * compute keypoints for every level in the pyramid
+    * 1. for each level of the pyramid
+    *    1) divide the image into ceils, in each ceil, first use the ini threshold to extract fast keypoints, if can not extract keypoints, use lower threshold to extract
+    *    2) for the keypoints extracted in the last step, divide the image into nodes, for every node, retain the best point in it
+    *    3) for every keypoint, set its coordinate, level in the pyramid and scaledPatchSize
+    * 2. for keypoints in each level of the pyramid, compute the orientation
+    */
     ComputeKeyPointsOctTree(allKeypoints);//对金字塔每层计算关键点，并在单个节点上进行关键点的抑制使其分布均匀
     //ComputeKeyPointsOld(allKeypoints);这个函数有限保证总个数，且对点的抑制是全局意义上的
 

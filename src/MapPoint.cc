@@ -248,6 +248,14 @@ float MapPoint::GetFoundRatio()//返回找到次数与观测次数的比
 /*
 对于所有观察到地图点的关键帧，若该帧不是坏帧，则将该帧中地图点对应的描述子给入描述子集合中，对于某个描述子，求其与其他描述子的距离
 对于与其他描述子距离中值最小的描述子，取其为地图点的描述子*/
+/*
+ * 1. if this is a bad map point, return from this function
+ * 2. get keyframes which observe this mappoint and the corresponding index in the keyframe, if this mappoint is observed by no keyframe, return from this function
+ * 3. for every keyframe and index, if the keyframe is not bad, put the descriptor into the container; if no descriptor gotten, return from this function
+ * 4. for every descriptor in the container, compute the distance with all other descriptors
+ * 5. get the vector of the distance of the ith descriptor with all the N descriptors, sort the vector and take the distance median value of the ith
+ *    descriptor, then get the descriptor with the smallest median distance as the descriptor of the map point
+ */
 void MapPoint::ComputeDistinctiveDescriptors()
 {
     // Retrieve all observed descriptors
@@ -255,6 +263,7 @@ void MapPoint::ComputeDistinctiveDescriptors()
 
     map<KeyFrame*,size_t> observations;
 
+    // if this is a bad map point, return from this function, else get keyframes which observe this mappoint and its corresponding index
     {
         unique_lock<mutex> lock1(mMutexFeatures);
         if(mbBad)
@@ -262,11 +271,13 @@ void MapPoint::ComputeDistinctiveDescriptors()
         observations=mObservations;
     }
 
+    // if this mappoint is observed by no keyframe, return from this function
     if(observations.empty())
         return;
 
     vDescriptors.reserve(observations.size());
 
+    // for every keyframe and index, if the keyframe is not bad, put the descriptor into the container
     for(map<KeyFrame*,size_t>::iterator mit=observations.begin(), mend=observations.end(); mit!=mend; mit++)
     {
         KeyFrame* pKF = mit->first;
@@ -275,13 +286,14 @@ void MapPoint::ComputeDistinctiveDescriptors()
             vDescriptors.push_back(pKF->mDescriptors.row(mit->second));
     }
 
+    // if no descriptor gotten, return from this function
     if(vDescriptors.empty())
         return;
 
     // Compute distances between them
     const size_t N = vDescriptors.size();
 
-    float Distances[N][N];
+    float Distances[N][N];// compute the distances between every two descriptors in the container
     for(size_t i=0;i<N;i++)
     {
         Distances[i][i]=0;
@@ -296,6 +308,8 @@ void MapPoint::ComputeDistinctiveDescriptors()
     // Take the descriptor with least median distance to the rest
     int BestMedian = INT_MAX;
     int BestIdx = 0;
+    // get the vector of the distance of the ith descriptor with all the N descriptors, sort the vector and take the distance median value of the ith
+    // descriptor, then get the descriptor with the smallest median distance as the descriptor of the map point   
     for(size_t i=0;i<N;i++)
     {
         vector<int> vDists(Distances[i],Distances[i]+N);
@@ -338,11 +352,21 @@ bool MapPoint::IsInKeyFrame(KeyFrame *pKF)//查看地图点是否被某关键帧
 
 /*
 求取所有对应关键帧相机中心到三维地图点单位向量的均值，并求取三维地图点到参考关键帧的距离*/
+/*
+ * 1. get key frames and its corresponding indexes for this mappoint, and its refrence keyframe and pos in world,if this 
+ *    mappoint is observed by no keyframe, return from this function
+ * 2. for every keyframe that observe this mappoint, get the camera center of the keyframe, add up all unit vector from keyframe camera center to mappoint world pos,
+ *    then divide the sum by number of keyframes to get the average, then set the norm vector of this mappoint to the average
+ * 3. compute the vector from reference keyframe camera center to mappoint world pos, compute the distance between the world pos and the camera pos of the 
+ *    reference keyframe, get the level of the keypoint and the scale factor of that level in the pyramid, set the maxdistance to distance*levelscalefactor
+ *    set the mindistance to maxdistance/scalefactor_of_the_top_level_in_the_pyramid
+ */
 void MapPoint::UpdateNormalAndDepth()
 {
     map<KeyFrame*,size_t> observations;
     KeyFrame* pRefKF;
     cv::Mat Pos;
+    // get key frames and its corresponding indexes for this mappoint, and its refrence keyframe and pos in world
     {
         unique_lock<mutex> lock1(mMutexFeatures);
         unique_lock<mutex> lock2(mMutexPos);
@@ -353,9 +377,12 @@ void MapPoint::UpdateNormalAndDepth()
         Pos = mWorldPos.clone();
     }
 
+    // if this mappoint is observed by no keyframe, return from this function
     if(observations.empty())
         return;
 
+    // for every keyframe that observe this mappoint, get the camera center of the keyframe, add up all unit vector from keyframe camera center to mappoint world pos,
+    // then divide the sum by number of keyframes to get the average
     cv::Mat normal = cv::Mat::zeros(3,1,CV_32F);
     int n=0;
     for(map<KeyFrame*,size_t>::iterator mit=observations.begin(), mend=observations.end(); mit!=mend; mit++)
@@ -367,6 +394,9 @@ void MapPoint::UpdateNormalAndDepth()
         n++;
     }
 
+    // compute the vector from reference keyframe camera center to mappoint world pos, compute the distance between the world pos and the camera pos of the 
+    // reference keyframe, get the level of the keypoint and the scale factor of that level in the pyramid, set the maxdistance to distance*levelscalefactor
+    // set the mindistance to maxdistance/scalefactor_of_the_top_level_in_the_pyramid
     cv::Mat PC = Pos - pRefKF->GetCameraCenter();
     const float dist = cv::norm(PC);
     const int level = pRefKF->mvKeysUn[observations[pRefKF]].octave;//对应所在的金字塔层数

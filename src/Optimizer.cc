@@ -274,6 +274,44 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
 }
 
 /*参数是一个普通的帧*/
+/*
+ * optimize the pose of PFrame using the map point, add unary edges to the optimization graph, then optimize the problem and reset the pFrame pose，the returned
+ * int type value is (nInitialCorrespondences - nBad)(i.e. the number of inliers), where
+ * nInitialCorrespondences is the number of valid mappoints in pFrame
+ * nBad is the number of edges who has a chi2 bigger than thres after optimazation
+ * 
+ * 1. set the function parameter as an optimize vertex, don't fix the value during optimization
+ * 2. initialize a vector of mono edges and a vector of stereo edges whose size of storage ability is the number of feature points in pFrame
+ * 3. for every keypoints in the pFrame
+ *       get the mappoint, if the mappoint pointer is not null
+ *       3.1 if the right abscissa value of the pFrame is less than 0, increase the number of initial correspondence by 1, add a monocular edge for the problem.
+ *           get the value of the keypoint and set (ul, vl) as the observation of the edge, use the invLevelSigma2 of the keypoint level to set the information 
+ *           matrix of the edge use the deltaMono to set the robust kernel of the edge, push the edge to vpEdgesMono and push the index of the point to vnIndexEdgeMono
+ *       3.2 else, increase the number of initial correspondence by 1, add a stereo edge for the problem. get the value of the keypoints and set (ul, vl, ur) as the 
+ *           observation of the edge, use the invLevelSigma2 of the keypoint level to set the information matrix of the edge, use the deltaStereo to set the robust kernel
+ *           of the edge, push the edge to vpEdgesStereo and push the index of the point to vnIndexEdgeStereo
+ *       note:in the above mentioned vnIndexEdgeMono and vnIndexEdgeStereo, every index's mvbOutlier is false
+ * 4. if the number of initial correspondences is less than 3, return 0
+ * 5. devide the optimization process into 4 parts, each part represent 10 times of optimazation, for every part of the optimazation in the 4 parts
+ *    5.1 for all edges in vpEdgesMono
+ *        5.1.1 get the edge, get the index of the mappoint in the keyframe, if the index is marked as an outlier, compute the _error of the edge 
+ *              as the difference between the keypoint in frame and the reprojection
+ *        5.1.2 for every edge, compute chi2 for that edge, i.e. _error.dot(information*_error),if chi2>thres, set the mvbOutlier flag for that point in the 
+ *              pFrame to true, set the level of that edge to 1 and add nBad by 1; else, set the mvbOutlier flag for that point in the pFrame to false and set 
+ *              the level of that edge to 0
+ *        5.1.3 if it==2, i.e. this is the third part of the optimization, set robust kernel of the edge to 0
+ *    5.2 for all edges in vpEdgesStereo
+ *        5.2.1 get the edge, get the index of the mappoint in the keyframe, if the index is marked as an outlier, compute the _error of the edge 
+ *              as the difference between the keypoint in frame and the reprojection
+ *        5.2.2 for every edge, compute chi2 for that edge, i.e. _error.dot(information*_error),if chi2>thres, set the mvbOutlier flag for that point in the 
+ *　　　　　　　　pFrame to true, set the level of that edge to 1 and add nBad by 1; else, set the mvbOutlier flag for that point in the pFrame to false and set
+ *　　　　　　　　the level of that edge to 0
+ *        5.2.3 if the edges of the optimizer is less than 10, break from this for circulation`
+ * 6. Recover optimized pose and return number of inliers
+ *    the returned int type value is nInitialCorrespondences - nBad, where
+ *    nInitialCorrespondences is the number of valid mappoints in pFrame
+ *    nBad is the number of edges who has a chi2 bigger than thres after optimazation
+ */
 int Optimizer::PoseOptimization(Frame *pFrame)
 {
     g2o::SparseOptimizer optimizer;
@@ -289,6 +327,7 @@ int Optimizer::PoseOptimization(Frame *pFrame)
     int nInitialCorrespondences=0;
 
     // Set Frame vertex  将这个帧作为图的第一个顶点给入优化问题中，在优化过程中不固定这个帧
+    // set the function parameter pFrame as an optimize vertex, and don't fix the value during optimization
     g2o::VertexSE3Expmap * vSE3 = new g2o::VertexSE3Expmap();
     vSE3->setEstimate(Converter::toSE3Quat(pFrame->mTcw));
     vSE3->setId(0);
@@ -298,6 +337,8 @@ int Optimizer::PoseOptimization(Frame *pFrame)
     // Set MapPoint vertices 帧中关键点的数量
     const int N = pFrame->N;
 
+    // initialize a vector of mono edges and a vector of stereo edges whose size of storage ability is the number of feature points in pFrame
+    
     /*单目
     这里边用的是onlypose类型的边*/
     vector<g2o::EdgeSE3ProjectXYZOnlyPose*> vpEdgesMono;
@@ -315,6 +356,17 @@ int Optimizer::PoseOptimization(Frame *pFrame)
     const float deltaStereo = sqrt(7.815);
 
     //每个有效地图点向优化问题增加一条一元边，边只连接了函数参数中的帧，不连接地图点，可以理解为只涉及优化帧位姿，不改变地图点
+    /*
+     * for every keypoints in the pFrame
+     *    get the mappoint, if the mappoint pointer is not null
+     *    1. if the right abscissa value of the pFrame is less than 0, increase the number of initial correspondence by 1, add a monocular edge for the problem.
+     *       get the value of the keypoint and set (ul, vl) as the observation of the edge, use the invLevelSigma2 of the keypoint level to set the information 
+     *       matrix of the edge use the deltaMono to set the robust kernel of the edge, push the edge to vpEdgesMono and push the index of the point to vnIndexEdgeMono
+     *    2. else, increase the number of initial correspondence by 1, add a stereo edge for the problem. get the value of the keypoints and set (ul, vl, ur) as the 
+     *       observation of the edge, use the invLevelSigma2 of the keypoint level to set the information matrix of the edge, use the deltaStereo to set the robust kernel
+     *       of the edge, push the edge to vpEdgesStereo and push the index of the point to vnIndexEdgeStereo
+     *    note:in the above mentioned vnIndexEdgeMono and vnIndexEdgeStereo, every index's mvbOutlier is false
+     */
     {
         unique_lock<mutex> lock(MapPoint::mGlobalMutex);
 
@@ -401,7 +453,7 @@ int Optimizer::PoseOptimization(Frame *pFrame)
         }
     }
 
-
+    // if the number of initial correspondences is less than 3, return 0
     if(nInitialCorrespondences<3)//如果有效边数目太少，则返回0
         return 0;
 
@@ -413,6 +465,24 @@ int Optimizer::PoseOptimization(Frame *pFrame)
     const int its[4]={10,10,10,10};    
 
     int nBad=0;
+    /*
+     * devide the optimization process into 4 parts, each part represent 10 times of optimazation, for every part of the optimazation in the 4 parts
+     *    1. for all edges in vpEdgesMono
+     *       1.1 get the edge, get the index of the mappoint in the keyframe, if the index is marked as an outlier, compute the _error of the edge 
+     *           as the difference between the keypoint in frame and the reprojection,
+     *       1.2 for every edge, compute chi2 for that edge, i.e. _error.dot(information*_error),if chi2>thres, set the mvbOutlier flag for that point in the 
+     *           pFrame to true, set the level of that edge to 1 and add nBad by 1; else, set the mvbOutlier flag for that point in the pFrame to false and set 
+     *           the level of that edge to 0
+     *       1.3 if it==2, i.e. this is the third part of the optimization, set robust kernel of the edge to 0
+     *    2. for all edges in vpEdgesStereo
+     *       1.1 get the edge, get the index of the mappoint in the keyframe, if the index is marked as an outlier, compute the _error of the edge 
+     *           as the difference between the keypoint in frame and the reprojection,
+     *       1.2 for every edge, compute chi2 for that edge, i.e. _error.dot(information*_error),if chi2>thres, set the mvbOutlier flag for that point in the 
+     *           pFrame to true, set the level of that edge to 1 and add nBad by 1; else, set the mvbOutlier flag for that point in the pFrame to false and set
+     *           the level of that edge to 0
+     *       1.3 if it==2, i.e. this is the parameter setting for the last part of the optimization, set robust kernel of the edge to 0
+     *    3. if the edges of the optimizer is less than 10, break from this for circulation`
+     */
     for(size_t it=0; it<4; it++)
     {
 
@@ -490,12 +560,14 @@ int Optimizer::PoseOptimization(Frame *pFrame)
 
     // Recover optimized pose and return number of inliers 取出优化后的位姿赋给这一帧
     g2o::VertexSE3Expmap* vSE3_recov = static_cast<g2o::VertexSE3Expmap*>(optimizer.vertex(0));
-    g2o::SE3Quat SE3quat_recov = vSE3_recov->estimate();
+    g2o::SE3Quat SE3quat_recov = vSE3_recov->estimate();// return the current estimate of the vertex 
     cv::Mat pose = Converter::toCvMat(SE3quat_recov);
-    pFrame->SetPose(pose);
+    pFrame->SetPose(pose);//set the estimated pose tobe the pose of pFrame
     /*
     nInitialCorrespondences为四次迭代之前向图中加入的边，即有效的此帧观测到的地图点；nBad为误差过大的点数；二者相减函数的返回值即为局内点个数
     */
+    // nInitialCorrespondences is the number of valid mappoints in pFrame
+    // nBad is the number of edges who has a chi2 bigger than thres after optimazation
     return nInitialCorrespondences-nBad;
 }
 

@@ -32,7 +32,7 @@ Map::Map():mnMaxKFid(0),mnBigChangeIdx(0)
 void Map::AddKeyFrame(KeyFrame *pKF)
 {
     unique_lock<mutex> lock(mMutexMap);
-    mspKeyFrames.insert(pKF);
+    mspKeyFrames.insert(pKF);// std::set<KeyFrame*> mspKeyFrames;
     if(pKF->mnId>mnMaxKFid)
         mnMaxKFid=pKF->mnId;
 }

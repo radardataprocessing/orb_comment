@@ -29,10 +29,11 @@ using namespace std;
 
 namespace ORB_SLAM2
 {
-
+// const ORBVocabulary* mpVoc; associated vocabulary
 KeyFrameDatabase::KeyFrameDatabase (const ORBVocabulary &voc):
     mpVoc(&voc)
 {
+    // std::vector<list<KeyFrame*> > mvInvertedFile; inverted file
     mvInvertedFile.resize(voc.size());
 }
 
@@ -196,24 +197,41 @@ vector<KeyFrame*> KeyFrameDatabase::DetectLoopCandidates(KeyFrame* pKF, float mi
     return vpLoopCandidates;
 }
 
+/*
+ * 1. get all keyframes that share words with F and compute how many words the two frame share, if there is no keyframe shares words with F, return an 
+ *    empty vector
+ * 2. for every keyframe that shares word with F, find the max number of common words, compute the min number of common words as 0.8 times max number
+ *    of common words
+ * 3. for every keyframe that shares word with F, if the keyframe shares more than threshold word with F, compute the score between bow vector of the 
+ *    two frame, set the relocScore of the keyframe, make the score and the keyframe a pair and push them into a list, if the vector of pair is 
+ *    empty, return an empty vector
+ * 4. for every pair in the list lScoreAndMatch, get the keyframe and the best covisible keyframes of the keyframe, accumulate score among covisible 
+ *    keyframes and make pair of the accscore and the covisible keyframe of the best score and put the pair into lAccScoreAndMatch, find the best 
+ *    accScore among all the lScoreAndMatch
+ * 5. compute the accumulate score threshold as 0.75 times the best accumulate score
+ * 6. for every pair of the accumulated score and the best keyframe among covisible frames in the list lAccScoreAndMatch, if the accumulated score is 
+ *    bigger than the threshold and the keyframe haven't been put into the set before, push the keyframe to vpRelocCandidates and to the set
+ * 7. return vpRelocCandidates
+ */
 vector<KeyFrame*> KeyFrameDatabase::DetectRelocalizationCandidates(Frame *F)
 {
-    list<KeyFrame*> lKFsSharingWords;
+    list<KeyFrame*> lKFsSharingWords;// keyframes that shares words with frame F
 
     // Search all keyframes that share a word with current frame
     {
         unique_lock<mutex> lock(mMutex);
 
-        for(DBoW2::BowVector::const_iterator vit=F->mBowVec.begin(), vend=F->mBowVec.end(); vit != vend; vit++)
+        // class BowVector: public std::map<WordId, WordValue>
+        for(DBoW2::BowVector::const_iterator vit=F->mBowVec.begin(), vend=F->mBowVec.end(); vit != vend; vit++)// for every word in the bow vector of F
         {
-            list<KeyFrame*> &lKFs =   mvInvertedFile[vit->first];
+            list<KeyFrame*> &lKFs =   mvInvertedFile[vit->first];// use the bow word id to get keyframes
 
-            for(list<KeyFrame*>::iterator lit=lKFs.begin(), lend= lKFs.end(); lit!=lend; lit++)
+            for(list<KeyFrame*>::iterator lit=lKFs.begin(), lend= lKFs.end(); lit!=lend; lit++)// for every keyframe in the list
             {
                 KeyFrame* pKFi=*lit;
-                if(pKFi->mnRelocQuery!=F->mnId)
+                if(pKFi->mnRelocQuery!=F->mnId)// if the mnRelocQuery of pKFi is not the frameid of F
                 {
-                    pKFi->mnRelocWords=0;
+                    pKFi->mnRelocWords=0;// mnRelocWords means how many words the pKFi and its reloc query share
                     pKFi->mnRelocQuery=F->mnId;
                     lKFsSharingWords.push_back(pKFi);
                 }
@@ -221,38 +239,44 @@ vector<KeyFrame*> KeyFrameDatabase::DetectRelocalizationCandidates(Frame *F)
             }
         }
     }
-    if(lKFsSharingWords.empty())
+    if(lKFsSharingWords.empty()) // if there is no keyframe shares word with F, return an empty vector 
         return vector<KeyFrame*>();
 
     // Only compare against those keyframes that share enough words
     int maxCommonWords=0;
+    //for every keyframe that shares word with F,find the one with the max number of common words
     for(list<KeyFrame*>::iterator lit=lKFsSharingWords.begin(), lend= lKFsSharingWords.end(); lit!=lend; lit++)
     {
         if((*lit)->mnRelocWords>maxCommonWords)
             maxCommonWords=(*lit)->mnRelocWords;
     }
 
-    int minCommonWords = maxCommonWords*0.8f;
+    int minCommonWords = maxCommonWords*0.8f;// compute the min number of common words using the max number of common words
 
     list<pair<float,KeyFrame*> > lScoreAndMatch;
 
     int nscores=0;
 
-    // Compute similarity score.
+    /* the class KeyFrame has some variables corresponding to relocalization, for example
+     * 1. long unsigned int mnRelocQuery
+     * 2. int mnRelocWords
+     * 3. float mRelocScore
+     */
+    // Compute similarity score. for every keyframe that shares word with F
     for(list<KeyFrame*>::iterator lit=lKFsSharingWords.begin(), lend= lKFsSharingWords.end(); lit!=lend; lit++)
     {
         KeyFrame* pKFi = *lit;
 
-        if(pKFi->mnRelocWords>minCommonWords)
+        if(pKFi->mnRelocWords>minCommonWords) // if the keyframe shares more than threshold word with F
         {
             nscores++;
-            float si = mpVoc->score(F->mBowVec,pKFi->mBowVec);
-            pKFi->mRelocScore=si;
-            lScoreAndMatch.push_back(make_pair(si,pKFi));
+            float si = mpVoc->score(F->mBowVec,pKFi->mBowVec);// compute the score between two bow vector
+            pKFi->mRelocScore=si;// set the relocScore of the keyframe
+            lScoreAndMatch.push_back(make_pair(si,pKFi));// make the score and the keyframe a pair and push them into a list
         }
     }
 
-    if(lScoreAndMatch.empty())
+    if(lScoreAndMatch.empty())// if the list containing score and keyframe is empty, return an empty vector
         return vector<KeyFrame*>();
 
     list<pair<float,KeyFrame*> > lAccScoreAndMatch;
@@ -262,50 +286,55 @@ vector<KeyFrame*> KeyFrameDatabase::DetectRelocalizationCandidates(Frame *F)
     for(list<pair<float,KeyFrame*> >::iterator it=lScoreAndMatch.begin(), itend=lScoreAndMatch.end(); it!=itend; it++)
     {
         KeyFrame* pKFi = it->second;
+        /* vector<KeyFrame*> KeyFrame::GetBestCovisibilityKeyFrames(const int &N) if the keyframe has more than N ordered connected keyframes, get the first
+           N keyframes in the vector, else get the whole vector*/ 
         vector<KeyFrame*> vpNeighs = pKFi->GetBestCovisibilityKeyFrames(10);
 
         float bestScore = it->first;
         float accScore = bestScore;
         KeyFrame* pBestKF = pKFi;
+        // accScore means the sum of the score between F and some covisible keyframes
+        // for every keyframe in the vpNeighs got above
         for(vector<KeyFrame*>::iterator vit=vpNeighs.begin(), vend=vpNeighs.end(); vit!=vend; vit++)
         {
-            KeyFrame* pKF2 = *vit;
-            if(pKF2->mnRelocQuery!=F->mnId)
+            KeyFrame* pKF2 = *vit;// get the neighbor keyframe
+            if(pKF2->mnRelocQuery!=F->mnId)// if the neighbor keyframe's relocQuery is not F, continue to process next neighbor keyframe
                 continue;
 
-            accScore+=pKF2->mRelocScore;
-            if(pKF2->mRelocScore>bestScore)
+            accScore+=pKF2->mRelocScore;// add the relocScore of the neighbor keyframe to accScore
+            if(pKF2->mRelocScore>bestScore)// if the relocScore of the neighbor keyframe is bigger than the bestScore
             {
-                pBestKF=pKF2;
-                bestScore = pKF2->mRelocScore;
+                pBestKF=pKF2;//set best keyframe to be the neighbor keyframe
+                bestScore = pKF2->mRelocScore;// set bestScore tobe the relocScore of the neighbor keyframe
             }
 
         }
-        lAccScoreAndMatch.push_back(make_pair(accScore,pBestKF));
+        lAccScoreAndMatch.push_back(make_pair(accScore,pBestKF));// make pair of the accumulated score and the best keyframe among covisible frames
         if(accScore>bestAccScore)
             bestAccScore=accScore;
     }
 
     // Return all those keyframes with a score higher than 0.75*bestScore
-    float minScoreToRetain = 0.75f*bestAccScore;
+    float minScoreToRetain = 0.75f*bestAccScore;// compute the accumulate score threshold as 0.75 miltiply the best accumulate score
     set<KeyFrame*> spAlreadyAddedKF;
     vector<KeyFrame*> vpRelocCandidates;
     vpRelocCandidates.reserve(lAccScoreAndMatch.size());
+    // for every pair of the accumulated score and the best keyframe among covisible frames in the list lAccScoreAndMatch
     for(list<pair<float,KeyFrame*> >::iterator it=lAccScoreAndMatch.begin(), itend=lAccScoreAndMatch.end(); it!=itend; it++)
     {
-        const float &si = it->first;
-        if(si>minScoreToRetain)
+        const float &si = it->first;// get the accumulated score
+        if(si>minScoreToRetain)// if the accumulated score is bigger than the threshold
         {
-            KeyFrame* pKFi = it->second;
-            if(!spAlreadyAddedKF.count(pKFi))
+            KeyFrame* pKFi = it->second;//get the keyframe
+            if(!spAlreadyAddedKF.count(pKFi))// if the keyframe haven't been put into the set
             {
-                vpRelocCandidates.push_back(pKFi);
-                spAlreadyAddedKF.insert(pKFi);
+                vpRelocCandidates.push_back(pKFi);// push the keyframe to vector vpRelocCandidates
+                spAlreadyAddedKF.insert(pKFi);// insert the keyframe to set spAlreadyAddedKF
             }
         }
     }
 
-    return vpRelocCandidates;
+    return vpRelocCandidates;// return the vector of keyframes vpRelocCandidates
 }
 
 } //namespace ORB_SLAM
